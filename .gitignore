@@ -1,0 +1,6 @@
+target/
+web/
+
+*.sw*
+
+.DS_Store
