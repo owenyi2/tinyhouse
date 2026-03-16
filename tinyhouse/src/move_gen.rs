@@ -801,6 +801,14 @@ impl GameState {
             .into_iter()
             .filter(move |move_| !self.make_move(move_).detect_check(self.side))
     }
+    pub fn detect_mate(&self) -> Option<bool> {
+        if self.generate_legal_moves().peekable().next().is_none() {
+            Some(self.detect_check(self.side)) // checkmate if true else stalemate
+        } else {
+            None
+        }
+    }
+
 }
 
 impl Default for GameState {

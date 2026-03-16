@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use eframe::egui;
 use egui::Sense;
 use egui::{Align2, Color32, FontId, Pos2, Rect, Rgba, Vec2};
-use web_sys::console;
+use web_sys::{console, window};
 
 use tinyhouse::get_bit;
 use tinyhouse::move_gen::{GameState, BitBoard};
@@ -19,12 +19,17 @@ pub struct TinyhouseApp {
 struct ChessBoardWidget {
     selected_square: Option<Square>,
     selected_piece: Option<Square>,
-    promotion_pending: Option<(Square, Square)>, // (source, target)
     
+    promotion_pending: Option<Move>,
+    promotion_selected: Option<Piece>,
+
     selected_inventory_piece: Option<Piece>,
 
     available_piece_moves: HashMap<Square, Vec<Move>>,
     available_placement_moves: HashMap<Piece, Vec<Move>>,
+    player_side: Side,
+    
+    game_over: bool
 }
 
 impl ChessBoardWidget {
@@ -32,14 +37,27 @@ impl ChessBoardWidget {
         let mut widget = Self {
             selected_square: None,
             selected_piece: None,
+
             promotion_pending: None,
+            promotion_selected: None,
+
             selected_inventory_piece: None,
             available_piece_moves: HashMap::new(),
             available_placement_moves: HashMap::new(),
+            player_side: Side::White,
+
+            game_over: false 
         };
         widget.compute_available_moves(game_state);
         widget
     }
+    fn map_square(&self, rank: u8, file: u8) -> (u8, u8) {
+        match self.player_side {
+            Side::White => (rank, file),
+            Side::Black => (3 - rank, 3 - file),
+        }
+    }
+
     fn compute_available_moves(&mut self, game_state: &GameState) {
         self.available_piece_moves.clear();
         self.available_placement_moves.clear();
@@ -65,6 +83,7 @@ impl ChessBoardWidget {
         side: Side,
         painter: &mut egui::Painter,
         rect: egui::Rect,
+        left: bool
     ) {
         painter.rect_filled(rect, 0.0, egui::Color32::PURPLE);
         
@@ -77,11 +96,11 @@ impl ChessBoardWidget {
             Side::Black => Color32::BLACK
         };
         
-        let (mut y, sign) = match side {
-            Side::White => {
+        let (mut y, sign) = match left {
+            true => {
                 (rect.min.y, 1.)
             },
-            Side::Black => {
+            false => {
                 (rect.max.y - square_size, -1.)
             }
         };
@@ -129,8 +148,9 @@ impl ChessBoardWidget {
         for rank in 0..4 {
             for file in 0..4 {
                 let square = 4 * rank + file;
-                x = file as f32 * square_size;
-                y = rank as f32 * square_size;
+                
+                let (rank, file) = self.map_square(rank, file); 
+                (x, y) = (file as f32 * square_size, rank as f32 * square_size);
                     
                 // Draw Square
                 let square_rect = egui::Rect::from_min_size(
@@ -171,11 +191,11 @@ impl ChessBoardWidget {
         // Draw legal moves for selected piece
         if let Some(square) = self.selected_square {
             if let Some(moves) = self.available_piece_moves.get(&square) {
-                self.selected_piece = Some(square);
                 for r#move in moves {
                     let target_square = r#move.target as u8;
                     let rank = target_square / 4;
                     let file = target_square % 4;
+                    let (rank, file) = self.map_square(rank, file);
                     let square_pos = origin + Vec2::new(file as f32 * square_size, rank as f32 * square_size);
                     let centre = square_pos + Vec2::splat(square_size * 0.5);
                     let colour = Color32::from_rgba_unmultiplied(200, 200, 200, 128);
@@ -183,30 +203,33 @@ impl ChessBoardWidget {
                 }
             } 
         }
+
         if let Some(piece) = self.selected_inventory_piece {
-            let mut available_squares = !(game_state.occupancies()[Side::White] | game_state.occupancies()[Side::Black]);
-            if piece == Piece::Pawn {
-                match game_state.side() {
-                    Side::White => {available_squares &= BitBoard(0b0000_1111_1111_1111);}
-                    Side::Black => {available_squares &= BitBoard(0b1111_0000_0000_0000);}
+            if let Some(moves) = self.available_placement_moves.get(&piece) {
+                for r#move in moves {
+                    let target_square = r#move.target as u8;
+                    let rank = target_square / 4;
+                    let file = target_square % 4;
+                    let (rank, file) = self.map_square(rank, file);
+                    let square_pos = origin + Vec2::new(file as f32 * square_size, rank as f32 * square_size);
+                    let centre = square_pos + Vec2::splat(square_size * 0.5);
+                    let colour = Color32::from_rgba_unmultiplied(200, 200, 200, 128);
+                    painter.circle_filled(centre, square_size * 0.2, colour);
                 }
-            }
-            for square in available_squares {
-                let rank = square as u32 / 4;
-                let file = square as u32 % 4;
-                let square_pos = origin + Vec2::new(file as f32 * square_size, rank as f32 * square_size);
-                let centre = square_pos + Vec2::splat(square_size * 0.5);
-                let colour = Color32::from_rgba_unmultiplied(200, 200, 200, 128);
-                painter.circle_filled(centre, square_size * 0.2, colour);
-            
-            }
+            } 
         } 
     }
     fn handle_board_clicked(&mut self, response: &egui::Response, rect: egui::Rect, square_size: f32) {
         if let Some(pos) = response.interact_pointer_pos() {
             let relative_pos = pos - rect.min;
-            let clicked_file = (relative_pos.x / square_size).floor() as u32;
-            let clicked_rank = (relative_pos.y / square_size).floor() as u32;
+            let mut clicked_file = (relative_pos.x / square_size).floor() as u32;
+            let mut clicked_rank = (relative_pos.y / square_size).floor() as u32;
+            
+            
+            (clicked_file, clicked_rank) = match self.player_side {
+                Side::White => (clicked_file, clicked_rank),
+                Side::Black => (3 - clicked_file, 3 - clicked_rank)
+            };
 
             if clicked_file < 4 && clicked_rank < 4 {
                 let clicked_square = Square::from(4 * clicked_rank + clicked_file);
@@ -220,17 +243,24 @@ impl ChessBoardWidget {
     fn deselect_board(&mut self) {
         self.selected_square = None;
         self.selected_piece = None;
-        self.promotion_pending = None;
     }
     fn deselect_inventory(&mut self) {
         self.selected_inventory_piece = None;
     }
-    fn handle_inventory_clicked(&mut self, response: &egui::Response, rect: egui::Rect, smaller_square_size: f32) {
+    fn deselect_promotion(&mut self) {
+        self.promotion_pending = None;
+        self.promotion_selected = None;
+    }
+    fn handle_inventory_clicked(&mut self, response: &egui::Response, rect: egui::Rect, smaller_square_size: f32, left: bool) {
         if let Some(pos) = response.interact_pointer_pos() {
             let relative_pos = pos - rect.min;
-            let clicked_piece = (relative_pos.y / smaller_square_size).floor() as usize;
+            let mut clicked_piece = (relative_pos.y / smaller_square_size).floor() as usize;
 
             if clicked_piece < 4 {
+                clicked_piece = match left {
+                    true => clicked_piece,
+                    false => 3 - clicked_piece,
+                };
                 let clicked_piece = [Piece::Wazir, Piece::Ma, Piece::Ferz, Piece::Pawn][clicked_piece]; 
                     
                 self.selected_inventory_piece = Some(clicked_piece);
@@ -239,12 +269,12 @@ impl ChessBoardWidget {
     }
 
     fn update(&mut self, game_state: &mut GameState) {
+        let mut selected_move = None;
         if let Some(target_square) = self.selected_square {
             if let Some(source_square) = self.selected_piece {
                 // these will only differ at this point if self.selected_square is Some but
                 // self.available_piece_moves.get(&square) was None
                 if let Some(moves) = self.available_piece_moves.get(&source_square) {
-                    let mut selected_move = None;
                     for r#move in moves {
                         // TODO: For given source/target we cannot assume there is unique move
                         // Precisely because promotions exist
@@ -255,28 +285,36 @@ impl ChessBoardWidget {
                                 break;
                             }
                         } else {
-                            self.promotion_pending = Some((source_square, target_square));
-                            break;
+                            if r#move.target == target_square {
+                                self.promotion_pending = Some(r#move.clone());
+                                break;
+                            }
                         }
                     } 
-                    if let Some(r#move) = selected_move {
-                        *game_state = game_state.make_move(r#move);
-                        self.compute_available_moves(game_state);
-
-                        for (square, moves) in &self.available_piece_moves {
-                            console::log_1(&format!("{}", square).into());
-                            for r#move in moves {
-                                console::log_1(
-                                    &format!("{:?}", r#move).into()
-                                    );
-                            }
-                        } 
-                    }
                 }
             }
             if let Some(piece) = self.selected_inventory_piece {
-                todo!()
+                if let Some(moves) = self.available_placement_moves.get(&piece) {
+                    for r#move in moves {
+                        if r#move.target == target_square {
+                            selected_move = Some(r#move);
+                            break;
+                        }
+                    }
+                }
             }
+        }
+        if let (Some(r#move), Some(piece)) = (&mut self.promotion_pending, self.promotion_selected) {
+            r#move.promoted_piece = Some(piece);
+            selected_move = Some(r#move);
+        }
+        if let Some(r#move) = selected_move {
+            *game_state = game_state.make_move(r#move);
+            self.compute_available_moves(game_state);
+            self.player_side = *game_state.side(); // board-flipping
+            self.deselect_inventory();
+            self.deselect_promotion();
+
         }
     } 
 
@@ -306,44 +344,89 @@ impl ChessBoardWidget {
         let mut left_inventory_painter = ui.painter_at(left_inventory_rect);
         let mut board_painter = ui.painter_at(board_rect);
         let mut right_inventory_painter = ui.painter_at(right_inventory_rect);
-
-        // --- input handling ---
-        // self.handle_input(&response);
-        if response.clicked() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                if left_inventory_rect.contains(pos) {
-                    self.handle_inventory_clicked(&response, left_inventory_rect, square_size);
-                } else {
-                    
+ 
+        if !self.game_over {
+            // --- input handling ---
+            if self.promotion_pending.is_some() {
+                egui::ComboBox::from_label("Choose piece")
+                    .selected_text(format!("{}", match self.promotion_selected { Some(piece) => piece.to_string(), None => "".to_string()}))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.promotion_selected, Some(Piece::Wazir), "Wazir");
+                        ui.selectable_value(&mut self.promotion_selected, Some(Piece::Ferz), "Ferz");
+                        ui.selectable_value(&mut self.promotion_selected, Some(Piece::Ma), "Ma");
+                    });
+            }
+            if response.clicked() {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    let (inventory_rect, left) = match *game_state.side() == self.player_side {
+                        true => {
+                            (left_inventory_rect, true)
+                        },
+                        false => {
+                            (right_inventory_rect, false)
+                        }
+                    };
+                    if inventory_rect.contains(pos) {
+                        self.handle_inventory_clicked(&response, inventory_rect, square_size, left);
+                        self.deselect_promotion();
+                    } 
+                     
+                    if board_rect.contains(pos) {
+                        self.handle_board_clicked(&response, board_rect, square_size);
+                        self.deselect_promotion();
+                    } else {
+                        self.deselect_board();
+                    }
                 }
-                if board_rect.contains(pos) {
-                    self.handle_board_clicked(&response, board_rect, square_size)
+                if !self.selected_piece.is_none() {
+                    self.deselect_inventory();
+                }
+                if let Some(piece) = self.selected_inventory_piece {
+                    if let Some(moves) = self.available_placement_moves.get(&piece) {
+                        for r#move in moves {
+                            console::log_1(&format!("Move: {}", r#move).into());
+                        }
+                    }
+                }
+            }
+            if response.clicked_elsewhere() {
+                self.deselect_board();
+                self.deselect_inventory();
+            }
+
+            // --- state update ---
+            self.update(game_state);
+
+            // --- detect game over ---
+            if let Some(m) = game_state.detect_mate() {
+                self.game_over = true;
+                if m {
+                    if let Some(win) = window() {
+                        win.alert_with_message("CHECKMATE");
+                    }
                 } else {
-                    self.deselect_board();
+                    if let Some(win) = window() {
+                        win.alert_with_message("STALEMATE");
+                    }
                 }
             }
         }
-        if response.clicked_elsewhere() {
-            self.deselect_board();
-        }
-
-        // --- state update ---
-        self.update(game_state);
-
         // --- drawing ---
         self.draw_inventory(
             game_state,
-            Side::White,
+            self.player_side,
             &mut left_inventory_painter,
             left_inventory_rect,
+            true
         );
         self.draw_board(game_state, &mut board_painter, square_size, board_rect);
         self.draw_inventory(
             game_state,
-            Side::Black,
+            -self.player_side,
             &mut right_inventory_painter,
             right_inventory_rect,
-        );
+            false
+        ); 
     }
 }
 
