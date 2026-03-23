@@ -8,6 +8,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 tinyhouse = { path = "../tinyhouse" }
+search = { path = "../search" }
 eframe = "0.33"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4.50"

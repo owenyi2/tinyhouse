@@ -2563,6 +2563,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "search"
+version = "0.1.0"
+dependencies = [
+ "tinyhouse",
+]
+
+[[package]]
 name = "semver"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2912,6 +2919,7 @@ name = "tinyhouse-ui"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "search",
  "tinyhouse",
  "wasm-bindgen-futures",
  "web-sys",

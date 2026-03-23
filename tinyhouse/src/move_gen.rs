@@ -1,7 +1,7 @@
 use std::fmt::{self, Display};
 use std::ops::{Index, IndexMut, Neg, Not};
 
-#[derive(Copy, Clone)]
+#[derive(Default, Copy, Clone)]
 pub struct BitBoard(pub u16);
 
 #[macro_export]
@@ -391,7 +391,7 @@ impl Inventory {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Default, Clone, Copy)]
 pub struct PieceBoards {
     pub king: BitBoard,
     pub wazir: BitBoard,
@@ -427,7 +427,7 @@ impl IndexMut<Piece> for PieceBoards {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Default, Clone, Copy)]
 pub struct Occupancies {
     pub white: BitBoard,
     pub black: BitBoard,
@@ -488,6 +488,58 @@ pub struct GameState {
 }
 
 impl GameState {
+    pub fn new(
+        piece_map: Vec<(Piece, Side, Square)>,
+        former_pawns_list: Vec<Square>,
+        inventory_map: [(u8, u8, u8, u8); 2],
+        side: Side,
+    ) -> Self {
+        let mut bitboards = PieceBoards::default();
+        let mut occupancies = Occupancies::default();
+        for (piece, side, square) in piece_map {
+            set_bit!(bitboards[piece], square);
+            set_bit!(occupancies[side], square);
+        }
+        let mut former_pawns = BitBoard(0);
+        for square in former_pawns_list {
+            set_bit!(former_pawns, square)
+        }
+        let mut inventory = [Inventory::from(0), Inventory::from(0)];
+        for _ in 0..inventory_map[0].0 {
+            inventory[0].increment(Piece::Wazir)
+        }
+        for _ in 0..inventory_map[0].1 {
+            inventory[0].increment(Piece::Ma)
+        }
+        for _ in 0..inventory_map[0].2 {
+            inventory[0].increment(Piece::Ferz)
+        }
+        for _ in 0..inventory_map[0].3 {
+            inventory[0].increment(Piece::Pawn)
+        }
+
+        for _ in 0..inventory_map[1].0 {
+            inventory[1].increment(Piece::Wazir)
+        }
+        for _ in 0..inventory_map[1].1 {
+            inventory[1].increment(Piece::Ma)
+        }
+        for _ in 0..inventory_map[1].2 {
+            inventory[1].increment(Piece::Ferz)
+        }
+        for _ in 0..inventory_map[1].3 {
+            inventory[1].increment(Piece::Pawn)
+        }
+
+        GameState {
+            bitboards,
+            occupancies,
+            former_pawns,
+            inventory,
+            side,
+        }
+    }
+
     pub fn bitboards(&self) -> &PieceBoards {
         &self.bitboards
     }
@@ -788,7 +840,7 @@ impl GameState {
         new_state.side = -new_state.side;
         new_state
     }
-    fn detect_check(&self, side: Side) -> bool {
+    pub fn detect_check(&self, side: Side) -> bool {
         let attack_mask = self.enemy_attack_mask(side);
         return (attack_mask & self.bitboards[Piece::King] & self.occupancies[side]).0 != 0;
     }
